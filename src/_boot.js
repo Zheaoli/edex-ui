@@ -1,5 +1,9 @@
 const signale = require("signale");
 const {app, BrowserWindow, dialog, shell} = require("electron");
+const remoteMain = require('@electron/remote/main');
+
+// Initialize remote module
+remoteMain.initialize();
 
 process.on("uncaughtException", e => {
     signale.fatal(e);
@@ -30,7 +34,6 @@ if (!gotLock) {
 signale.time("Startup");
 
 const electron = require("electron");
-require('@electron/remote/main').initialize()
 const ipc = electron.ipcMain;
 const path = require("path");
 const url = require("url");
@@ -58,10 +61,10 @@ const innerFontsDir = path.join(__dirname, "assets/fonts");
 if (process.env.http_proxy) delete process.env.http_proxy;
 if (process.env.https_proxy) delete process.env.https_proxy;
 
-// Bypass GPU acceleration blocklist, trading a bit of stability for a great deal of performance, mostly on Linux
-app.commandLine.appendSwitch("ignore-gpu-blocklist");
-app.commandLine.appendSwitch("enable-gpu-rasterization");
-app.commandLine.appendSwitch("enable-video-decode");
+// // Bypass GPU acceleration blocklist, trading a bit of stability for a great deal of performance, mostly on Linux
+// app.commandLine.appendSwitch("ignore-gpu-blocklist");
+// app.commandLine.appendSwitch("enable-gpu-rasterization");
+// app.commandLine.appendSwitch("enable-video-decode");
 
 // Fix userData folder not setup on Windows
 try {
@@ -192,16 +195,18 @@ function createWindow(settings) {
         backgroundColor: '#000000',
         webPreferences: {
             devTools: true,
-	    enableRemoteModule: true,
             contextIsolation: false,
             backgroundThrottling: false,
             webSecurity: true,
             nodeIntegration: true,
-            nodeIntegrationInSubFrames: false,
-            allowRunningInsecureContent: false,
-            experimentalFeatures: settings.experimentalFeatures || false
+            nodeIntegrationInSubFrames: true,
+            sandbox: false,
+            enableRemoteModule: true
         }
     });
+
+    // Enable remote module for this window
+    remoteMain.enable(win.webContents);
 
     win.loadURL(url.format({
         pathname: path.join(__dirname, 'ui.html'),
@@ -231,7 +236,20 @@ app.on('ready', async () => {
     if (!require("fs").existsSync(settings.cwd)) throw new Error("Configured cwd path does not exist.");
 
     // See #366
-    let cleanEnv = await require("shell-env")(settings.shell).catch(e => { throw e; });
+    const spawn = require('cross-spawn');
+    const cleanEnv = process.env;
+    
+    // Get shell environment variables
+    const result = spawn.sync(settings.shell, ['-c', 'env'], { encoding: 'utf8' });
+    if (result.status === 0) {
+        const envOutput = result.stdout;
+        envOutput.split('\n').forEach(line => {
+            const [key, value] = line.split('=');
+            if (key && value) {
+                cleanEnv[key] = value;
+            }
+        });
+    }
 
     Object.assign(cleanEnv, {
         TERM: "xterm-256color",
